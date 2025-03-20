@@ -1,9 +1,10 @@
-##########################################
+#############################################################
 # Author: ee24s053 Karthik B K
 # Date: 20 March 2025
 #
 # This code is heavily modified by c3.7s+t
-##########################################
+# This file does not have any commenting for the same reason.
+#############################################################
 
 import datetime
 import re, sys
@@ -39,6 +40,7 @@ class Net:
 class Circuit:
     def __init__(self):
         self.gates, self.nets, self.inputs, self.outputs = {}, {}, [], []
+        self.gate_order = []
         
     def visualize_dag(self, output_file=None):
         G = nx.DiGraph()
@@ -63,7 +65,10 @@ class Circuit:
             plt.show()
             return None
     
-    def add_gate(self, gate): self.gates[gate.name] = gate
+    def add_gate(self, gate):
+        self.gates[gate.name] = gate
+        if gate.name not in self.gate_order:
+            self.gate_order.append(gate.name)
     
     def add_net(self, net): self.nets[net.name] = net
     
@@ -167,8 +172,21 @@ def analyze_circuit(ckt):
     
     print("\nGates and Fanouts:")
     print("----------------")
-    for gate_name, gate_fanouts in sorted(ckt.get_fanouts().items()):
-        print(f"Gate: {gate_name} Fanouts: {', '.join(sorted(gate_fanouts)) if gate_fanouts else 'None'}")
+    def get_gate_number(gate_name):
+        try:
+            parts = gate_name.split('_')
+            if len(parts) < 2:
+                return float('inf')
+                
+            num_part = parts[1]
+            return int(num_part)
+        except (IndexError, ValueError):
+            return float('inf')
+    
+    fanouts = ckt.get_fanouts()
+    for gate_name in sorted(fanouts.keys(), key=get_gate_number):
+        gate_fanouts = fanouts[gate_name]
+        print(f"Gate: {gate_name}\tFanouts: {', '.join(sorted(gate_fanouts, key=get_gate_number)) if gate_fanouts else 'None'}")
 
     print("\nLongest Paths:")
     print("-------------")
@@ -177,7 +195,13 @@ def analyze_circuit(ckt):
     if longest_paths:
         print(f"  Maximum path length: {max_length} nodes")
         print("  Longest paths:")
-        for i, path in enumerate(longest_paths): print(f"    Path {i+1}: {' -> '.join(path)}")
+        def get_path_priority(path):
+            if not path: return float('inf')
+            return get_gate_number(path[0])
+        
+        sorted_paths = sorted(longest_paths, key=get_path_priority)
+        for i, path in enumerate(sorted_paths):
+            print(f"    Path {i+1}: {' -> '.join(path)}")
     else: print("  No paths found in the circuit.")
 
 if __name__ == '__main__':
@@ -189,15 +213,15 @@ if __name__ == '__main__':
         with open(sys.argv[1], 'r') as f: file_contents = f.read()
         circuit = parse(file_contents)
         
-        # Generate output filename for DAG visualization
         base_filename = sys.argv[1].split('.')[0]
         output_file = f"{base_filename}_dag.png"
         
-        # Visualize the DAG
-        circuit.visualize_dag(output_file)
-        print(f"DAG visualization saved to: {output_file}")
+        try:
+            circuit.visualize_dag(output_file)
+            print(f"DAG visualization saved to: {output_file}")
+        except:
+            pass
         
-        # Analyze the circuit
         analyze_circuit(circuit)
     except FileNotFoundError: print(f"Error: File '{sys.argv[1]}' not found"); sys.exit(1)
     except Exception as e: print(f"Error: {e}"); sys.exit(1)
