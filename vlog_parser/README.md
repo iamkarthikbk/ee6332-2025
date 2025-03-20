@@ -1,1 +1,1 @@
-I have used the Claude 3.7 Sonnet with the extended thinking mode for writing this parser. Took a single prompt where i explicitly menitoned to check fanouts and crit path only after the entire netlist is parsed.
+I have used the Claude 3.7 Sonnet with the extended thinking mode for writing this parser.

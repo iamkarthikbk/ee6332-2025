@@ -1,211 +1,160 @@
-# Verilog Netlist Parser - ee24s053 Karthik B K - March 13 2025
+##########################################
+# Author: ee24s053 Karthik B K
+# Date: 20 March 2025
+#
+# This code is heavily modified by c3.7s+t
+##########################################
+
 import re, sys
-from collections import defaultdict
 
-class DAG:
+class Gate:
+    def __init__(self, name, gate_type):
+        self.name, self.gate_type, self.inputs, self.outputs = name, gate_type, [], []
+    
+    def add_input(self, gate):
+        if gate not in self.inputs:
+            self.inputs.append(gate)
+            if self not in gate.outputs: gate.outputs.append(self)
+    
+    def add_output(self, gate):
+        if gate not in self.outputs:
+            self.outputs.append(gate)
+            if self not in gate.inputs: gate.inputs.append(self)
+
+class Net:
+    def __init__(self, name, source=None, destinations=None):
+        self.name, self.source, self.destinations, self.value = name, source, destinations or [], None
+    
+    def add_destination(self, gate):
+        if gate not in self.destinations: self.destinations.append(gate)
+    
+    def set_source(self, gate):
+        self.source = gate
+
+class Circuit:
     def __init__(self):
-        self.graph = {}
-
-    def add_node(self, node):
-        if node not in self.graph:
-            self.graph[node] = set(); return True
-        return False
-
-    def add_edge(self, src, dst):
-        for node in [src, dst]:
-            if node not in self.graph:
-                self.graph[node] = set()
-        if self._would_create_cycle(src, dst):
-            raise ValueError(f"Edge {src}->{dst} would create cycle")
-        self.graph[src].add(dst); return True
-
-    def _would_create_cycle(self, src, dst):
-        return self._can_reach(dst, src)
-
-    def _can_reach(self, start, end, visited=None):
-        if visited is None: visited = set()
-        if start == end: return True
-        visited.add(start)
-        for neighbor in self.graph.get(start, set()):
-            if neighbor not in visited and self._can_reach(neighbor, end, visited): return True
-        return False
-
-    def get_children(self, node):
-        if node not in self.graph: raise KeyError(f"Node {node} not in graph")
-        return self.graph[node].copy()
-
-    def get_parents(self, node):
-        if node not in self.graph: raise KeyError(f"Node {node} not in graph")
-        return {n for n in self.graph if node in self.graph[n]}
-
-    def get_descendants(self, node):
-        if node not in self.graph: raise KeyError(f"Node {node} not in graph")
-        result = set(); self._collect_descendants(node, result); return result
-
-    def _collect_descendants(self, node, result):
-        for child in self.graph[node]:
-            if child not in result: result.add(child); self._collect_descendants(child, result)
-
-    def get_ancestors(self, node):
-        if node not in self.graph: raise KeyError(f"Node {node} not in graph")
-        result = set(); self._collect_ancestors(node, result); return result
-
-    def _collect_ancestors(self, node, result):
-        for parent in self.get_parents(node):
-            if parent not in result: result.add(parent); self._collect_ancestors(parent, result)
-
-    def topological_sort(self):
-        in_degree = {node: 0 for node in self.graph}
-        for node in self.graph:
-            for child in self.graph[node]: in_degree[child] = in_degree.get(child, 0) + 1
-        queue = [node for node in self.graph if in_degree[node] == 0]; result = []
-        while queue:
-            node = queue.pop(0); result.append(node)
-            for child in self.graph[node]:
-                in_degree[child] -= 1
-                if in_degree[child] == 0: queue.append(child)
-        if len(result) != len(self.graph): raise ValueError("Graph contains a cycle")
-        return result
-
-    def is_acyclic(self):
-        try: self.topological_sort(); return True
-        except ValueError: return False
-
-    def remove_edge(self, src, dst):
-        if src not in self.graph or dst not in self.graph: return False
-        if dst in self.graph[src]: self.graph[src].remove(dst); return True
-        return False
-
-    def remove_node(self, node):
-        if node not in self.graph: return False
-        del self.graph[node]
-        for src in self.graph:
-            if node in self.graph[src]: self.graph[src].remove(node)
-        return True
-
-    def __str__(self):
-        result = ["DAG:"]
-        for node in sorted(self.graph, key=str):
-            children = sorted(self.graph[node], key=str)
-            result.append(f"{node} -> {', '.join(map(str, children))}" if children else f"{node}")
-        return "\n".join(result)
-
-    def __len__(self):
-        return len(self.graph)
-
-    def __contains__(self, node):
-        return node in self.graph
-
-class VerilogParser:
-    def __init__(self, filename):
-        self.filename = filename
-        self.dag = DAG()
-        self.inputs = []
-        self.outputs = []
-        self.gates = {}
-        self.fanouts = defaultdict(list)
-        self.gate_depths = {}
-        self.max_depth_path = []
+        self.gates, self.nets, self.inputs, self.outputs = {}, {}, [], []
     
-    def parse(self):
-        with open(self.filename, 'r') as f:
-            content = f.read()
-        # Extract inputs/outputs
-        input_match = re.search(r'input\s+([^;]+);', content)
-        if input_match:
-            self.inputs = [x.strip() for x in input_match.group(1).replace('\n', '').split(',')]
-        output_match = re.search(r'output\s+([^;]+);', content)
-        if output_match:
-            self.outputs = [x.strip() for x in output_match.group(1).replace('\n', '').split(',')]
-        # Extract gates
-        for match in re.finditer(r'(not|nand|nor)\s+(\w+)\s+\(([^)]+)\);', content):
-            gate_type, gate_name = match.group(1), match.group(2)
-            pins = [x.strip() for x in match.group(3).split(',')]
-            output_pin, input_pins = pins[0], pins[1:]
-            # Store gate info
-            self.gates[gate_name] = {'type': gate_type, 'output': output_pin, 'inputs': input_pins}
-            # Add to DAG
-            self.dag.add_node(output_pin)
-            for input_pin in input_pins:
-                self.dag.add_node(input_pin)
-                self.dag.add_edge(input_pin, output_pin)
-        # Add primary I/O
-        for pin in self.inputs + self.outputs:
-            self.dag.add_node(pin)
+    def add_gate(self, gate): self.gates[gate.name] = gate
+    
+    def add_net(self, net): self.nets[net.name] = net
+    
+    def connect(self, source_gate_name, dest_gate_name, net_name=None):
+        source_gate, dest_gate = self.gates.get(source_gate_name), self.gates.get(dest_gate_name)
+        if not source_gate or not dest_gate: raise ValueError(f"Cannot connect: gate not found")
+        
+        net_name = net_name or f"{source_gate_name}_to_{dest_gate_name}"
+        if net_name not in self.nets:
+            net = Net(net_name, source_gate, [dest_gate])
+            self.add_net(net)
+        else:
+            net = self.nets[net_name]
+            net.set_source(source_gate)
+            net.add_destination(dest_gate)
+        
+        source_gate.add_output(dest_gate)
+        dest_gate.add_input(source_gate)
+        return net
+    
+    def set_input_gates(self, gate_names): self.inputs = gate_names
+    
+    def set_output_gates(self, gate_names): self.outputs = gate_names
+    
+    def get_fanouts(self):
+        return {gate_name: [g.name for g in gate.outputs] for gate_name, gate in self.gates.items()}
+    
+    def get_longest_paths(self):
+        sources = [gn for gn, g in self.gates.items() if not g.inputs]
+        sinks = [gn for gn, g in self.gates.items() if not g.outputs]
+        longest_paths, max_length = [], 0
+        
+        def find_paths(current, path, visited):
+            nonlocal longest_paths, max_length
+            visited.add(current); path.append(current)
             
-        # Calculate fanouts after all gates are processed
-        for gate_name, gate_info in self.gates.items():
-            for input_pin in gate_info['inputs']:
-                # Find which gate this input comes from
-                for src_gate, src_info in self.gates.items():
-                    if src_info['output'] == input_pin:
-                        self.fanouts[src_gate].append(gate_name)
-    
-    def calculate_gate_depths(self):
-        self.gate_depths = {}
-        # Set depth 0 for inputs
-        for input_pin in self.inputs: self.gate_depths[input_pin] = 0
-        # Process in topological order
-        try: topo_order = self.dag.topological_sort()
-        except ValueError:
-            print("Error: Circuit contains a cycle, which is not expected in a combinational circuit")
-            return
-        for node in topo_order:
-            if node in self.inputs: continue
-            parents = self.dag.get_parents(node)
-            if parents:
-                max_parent_depth = max(self.gate_depths.get(parent, 0) for parent in parents)
-                self.gate_depths[node] = max_parent_depth + 1
-            else: self.gate_depths[node] = 0
-    
-    def find_longest_path(self):
-        self.calculate_gate_depths()
-        # Find deepest output
-        max_depth, deepest_output = 0, None
-        for output_pin in self.outputs:
-            depth = self.gate_depths.get(output_pin, 0)
-            if depth > max_depth: max_depth, deepest_output = depth, output_pin
-        if not deepest_output: return []
-        # Trace back from output
-        path, current = [deepest_output], deepest_output
-        while self.gate_depths.get(current, 0) > 0:
-            parents = self.dag.get_parents(current)
-            if not parents: break
-            # Find parent with max depth
-            max_parent_depth, max_parent = 0, None
-            for parent in parents:
-                parent_depth = self.gate_depths.get(parent, 0)
-                if parent_depth > max_parent_depth: max_parent_depth, max_parent = parent_depth, parent
-            if max_parent: path.append(max_parent); current = max_parent
-            else: break
-        self.max_depth_path = list(reversed(path))
-        return self.max_depth_path
-    
-    def print_fanouts(self):
-        print("\nFanout information:")
-        for gate_name in sorted(self.gates.keys()):
-            fanout_str = ", ".join(self.fanouts[gate_name]) if gate_name in self.fanouts and self.fanouts[gate_name] else "No fanouts"
-            print(f"{gate_name} - {fanout_str}")
-    
-    def print_longest_path(self):
-        if not self.max_depth_path: self.find_longest_path()
-        print("\nLongest path information:")
-        print(f"Path length (logic depth): {len(self.max_depth_path) - 1}")
-        print(f"Path: {' -> '.join(self.max_depth_path)}")
-        # Find gates in path
-        gates_in_path = []
-        for i in range(len(self.max_depth_path) - 1):
-            current, next_node = self.max_depth_path[i], self.max_depth_path[i + 1]
-            for gate_name, gate_info in self.gates.items():
-                if gate_info['output'] == next_node: gates_in_path.append(gate_name); break
-        if gates_in_path: print(f"Gates in path: {' -> '.join(gates_in_path)}")
+            if current in sinks:
+                path_length = len(path)
+                if path_length > max_length: max_length, longest_paths = path_length, [path.copy()]
+                elif path_length == max_length: longest_paths.append(path.copy())
+            
+            for next_gate in self.gates[current].outputs:
+                if next_gate.name not in visited: find_paths(next_gate.name, path, visited)
+            
+            path.pop(); visited.remove(current)
+        
+        for source in sources: find_paths(source, [], set())
+        return longest_paths, max_length
 
-def main():
-    if len(sys.argv) != 2: print("Usage: python parser.py <verilog_file>"); return
-    parser = VerilogParser(sys.argv[1])
-    parser.parse()
-    parser.find_longest_path()
-    parser.print_longest_path()
-    # parser.print_fanouts()
+def parse(file_contents):
+    circuit = Circuit()
+    patterns = {
+        'input': re.compile(r'input\s+([^;]+);'),
+        'output': re.compile(r'output\s+([^;]+);'),
+        'wire': re.compile(r'wire\s+([^;]+);'),
+        'gate': re.compile(r'(not|nand|nor)\s+(\w+)\s*\(([^)]+)\);', re.MULTILINE)
+    }
+    
+    inputs = [inp.strip() for inp in patterns['input'].search(file_contents).group(1).split(',')] if patterns['input'].search(file_contents) else []
+    outputs = [out.strip() for out in patterns['output'].search(file_contents).group(1).split(',')] if patterns['output'].search(file_contents) else []
+    wires = [wire.strip() for wire in patterns['wire'].search(file_contents).group(1).split(',')] if patterns['wire'].search(file_contents) else []
+    
+    for signal_name in inputs + outputs + wires: circuit.add_net(Net(signal_name))
+    
+    for gate_match in patterns['gate'].finditer(file_contents):
+        gate_type, gate_name = gate_match.group(1).upper(), gate_match.group(2)
+        if not any(gate_name.lower().startswith(prefix) for prefix in ['nand', 'nor', 'not']): continue
+            
+        ports = [port.strip() for port in gate_match.group(3).split(',')]
+        output_port, input_ports = ports[0], ports[1:]
+        
+        gate = Gate(gate_name, gate_type)
+        circuit.add_gate(gate)
+        
+        output_net = circuit.nets.get(output_port) or Net(output_port)
+        if output_port not in circuit.nets: circuit.add_net(output_net)
+        output_net.set_source(gate)
+        
+        for input_port in input_ports:
+            input_net = circuit.nets.get(input_port) or Net(input_port)
+            if input_port not in circuit.nets: circuit.add_net(input_net)
+            input_net.add_destination(gate)
+        
+        if output_port in outputs and circuit.gates.get(output_port): circuit.connect(gate_name, output_port)
+    
+    for net_name, net in circuit.nets.items():
+        if net.source and net.destinations:
+            source_gate = net.source
+            for dest_gate in net.destinations:
+                if source_gate.name != dest_gate.name:
+                    is_gate = lambda g: any(g.name.lower().startswith(p) for p in ['nand', 'nor', 'not'])
+                    if is_gate(source_gate) and is_gate(dest_gate): circuit.connect(source_gate.name, dest_gate.name, net_name)
+    
+    circuit.set_input_gates(inputs)
+    circuit.set_output_gates(outputs)
+    return circuit
 
-if __name__ == "__main__": main()
+def analyze_circuit(ckt):
+    print("\nCircuit Analysis:\n=================")
+    print("\nGates and Fanouts:")
+    for gate_name, gate_fanouts in sorted(ckt.get_fanouts().items()):
+        print(f"Gate: {gate_name} Fanouts: {', '.join(sorted(gate_fanouts)) if gate_fanouts else 'None'}")
+
+    print("\nLongest Paths:")
+    longest_paths, max_length = ckt.get_longest_paths()
+    
+    if longest_paths:
+        print(f"  Maximum path length: {max_length} nodes")
+        print("  Longest paths:")
+        for i, path in enumerate(longest_paths): print(f"    Path {i+1}: {' -> '.join(path)}")
+    else: print("  No paths found in the circuit.")
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print("Error: Please provide a netlist file as an argument")
+        sys.exit(1)
+    
+    try:
+        with open(sys.argv[1], 'r') as f: file_contents = f.read()
+        analyze_circuit(parse(file_contents))
+    except FileNotFoundError: print(f"Error: File '{sys.argv[1]}' not found"); sys.exit(1)
+    except Exception as e: print(f"Error: {e}"); sys.exit(1)
