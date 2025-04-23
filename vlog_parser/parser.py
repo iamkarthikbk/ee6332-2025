@@ -124,7 +124,7 @@ def parse(file_contents):
         'input': re.compile(r'input\s+([^;]+);'),
         'output': re.compile(r'output\s+([^;]+);'),
         'wire': re.compile(r'wire\s+([^;]+);'),
-        'gate': re.compile(r'(not|nand|nor|xor|and|or|xnor)\s+(\w+)\s*\(([^)]+)\);', re.MULTILINE)
+        'gate': re.compile(r'(not|nand|nor)\s+(\w+)\s*\(([^)]+)\);', re.MULTILINE)
     }
     
     inputs = [inp.strip() for inp in patterns['input'].search(file_contents).group(1).split(',')] if patterns['input'].search(file_contents) else []
@@ -135,7 +135,7 @@ def parse(file_contents):
     
     for gate_match in patterns['gate'].finditer(file_contents):
         gate_type, gate_name = gate_match.group(1).upper(), gate_match.group(2)
-        if not any(gate_name.lower().startswith(prefix) for prefix in ['nand', 'nor', 'not', 'xor', 'and', 'or', 'xnor']): continue
+        if not any(gate_name.lower().startswith(prefix) for prefix in ['nand', 'nor', 'not']): continue
             
         ports = [port.strip() for port in gate_match.group(3).split(',')]
         output_port, input_ports = ports[0], ports[1:]
@@ -159,7 +159,7 @@ def parse(file_contents):
             source_gate = net.source
             for dest_gate in net.destinations:
                 if source_gate.name != dest_gate.name:
-                    is_gate = lambda g: any(g.name.lower().startswith(p) for p in ['nand', 'nor', 'not', 'xor', 'and', 'or', 'xnor'])
+                    is_gate = lambda g: any(g.name.lower().startswith(p) for p in ['nand', 'nor', 'not'])
                     if is_gate(source_gate) and is_gate(dest_gate): circuit.connect(source_gate.name, dest_gate.name, net_name)
     
     circuit.set_input_gates(inputs)
