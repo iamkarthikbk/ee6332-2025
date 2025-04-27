@@ -13,6 +13,9 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
+# this structure is used for lingest path search.
+from collections import deque
+
 class Gate:
     def __init__(self, name, gate_type):
         self.name = name
@@ -129,27 +132,51 @@ class Circuit:
     def get_fanouts(self):
         return {gate_name: [g.name for g in gate.outputs] for gate_name, gate in self.gates.items()}
     
-    def get_longest_paths(self):
-        sources = [gn for gn, g in self.gates.items() if not g.inputs]
+    def get_one_longest_path(self):
+        # make an adjacency list. for each vertex, note what vertices are connected ot it.
+        adj = {name: [g.name for g in gate.outputs] for name, gate in self.gates.items()}
+
+        # initilaize in-degree to zero for all vertices.
+        # this is basically going to conunt how many edges are coming _into_ that node.
+        # this is used within the topp sirt algorithm.
+        in_deg = {name: 0 for name in self.gates}
+        for outs in adj.values():
+            for v in outs:
+                in_deg[v] += 1
+        # topo sort. for every edge u ~> v, u must come before v in the ordering.
+        # this is needed to ensure inputs are handled before the gagte itself.
+        topo = []
+        q = deque([n for n, d in in_deg.items() if d == 0])
+        while q:
+            u = q.popleft()
+            topo.append(u)
+            for v in adj[u]:
+                in_deg[v] -= 1
+                if in_deg[v] == 0:
+                    q.append(v)
+        # search for longest path using topo sort. this is basically foing to be linear time O(v+e)
+        dist = {n: 1 for n in self.gates}  # node count
+        parent = {n: None for n in self.gates}
+        for u in topo:
+            for v in adj[u]:
+                # if the longest path going to v so far is shorter than the path going through u, update
+                if dist[v] < dist[u] + 1:
+                    dist[v] = dist[u] + 1
+                    parent[v] = u
+        # Find sink with max dist - this is going to be the longest path.
         sinks = [gn for gn, g in self.gates.items() if not g.outputs]
-        longest_paths, max_length = [], 0
-        
-        def find_paths(current, path, visited):
-            nonlocal longest_paths, max_length
-            visited.add(current); path.append(current)
-            
-            if current in sinks:
-                path_length = len(path)
-                if path_length > max_length: max_length, longest_paths = path_length, [path.copy()]
-                elif path_length == max_length: longest_paths.append(path.copy())
-            
-            for next_gate in self.gates[current].outputs:
-                if next_gate.name not in visited: find_paths(next_gate.name, path, visited)
-            
-            path.pop(); visited.remove(current)
-        
-        for source in sources: find_paths(source, [], set())
-        return longest_paths, max_length
+        if not sinks:
+            # this should'nt happen foe the iscas85 benches.
+            return [], 0
+        end = max(sinks, key=lambda n: dist[n])
+        max_length = dist[end]
+        # Reconstruct longest path. backwards and then reverse it.
+        path = []
+        while end is not None:
+            path.append(end)
+            end = parent[end]
+        path.reverse()
+        return path, max_length
 
 def parse(file_contents):
     circuit = Circuit()
@@ -250,21 +277,14 @@ def analyze_circuit(ckt):
         gate_fanouts = fanouts[gate_name]
         print(f"Gate: {gate_name}\tFanouts: {', '.join(sorted(gate_fanouts, key=get_gate_number)) if gate_fanouts else 'None'}")
 
-    print("\nLongest Paths:")
+    print("\nLongest Path:")
     print("-------------")
-    longest_paths, max_length = ckt.get_longest_paths()
-    
-    if longest_paths:
+    path, max_length = ckt.get_one_longest_path()
+    if path:
         print(f"  Maximum path length: {max_length} nodes")
-        print("  Longest paths:")
-        def get_path_priority(path):
-            if not path: return float('inf')
-            return get_gate_number(path[0])
-        
-        sorted_paths = sorted(longest_paths, key=get_path_priority)
-        for i, path in enumerate(sorted_paths):
-            print(f"    Path {i+1}: {' -> '.join(path)}")
-    else: print("  No paths found in the circuit.")
+        print("    ", " -> ".join(path))
+    else:
+        print("  No path found.")
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
