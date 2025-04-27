@@ -15,17 +15,44 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
 class Gate:
     def __init__(self, name, gate_type):
-        self.name, self.gate_type, self.inputs, self.outputs = name, gate_type, [], []
+        self.name = name
+        self.gate_type = gate_type
+        self.inputs = []
+        self.outputs = []
+        self.pi_inputs = []
+        self.po_outputs = []
+        self.input_mapping = {}
+        # Store the original Verilog input ports order
+        self.verilog_inputs = []
     
     def add_input(self, gate):
-        if gate not in self.inputs:
+        if isinstance(gate, Gate) and gate not in self.inputs:
             self.inputs.append(gate)
             if self not in gate.outputs: gate.outputs.append(self)
     
     def add_output(self, gate):
-        if gate not in self.outputs:
+        if isinstance(gate, Gate) and gate not in self.outputs:
             self.outputs.append(gate)
             if self not in gate.inputs: gate.inputs.append(self)
+            
+    def add_pi_input(self, pi_name):
+        if pi_name not in self.pi_inputs:
+            self.pi_inputs.append(pi_name)
+    
+    def add_po_output(self, po_name):
+        if po_name not in self.po_outputs:
+            self.po_outputs.append(po_name)
+
+    def __repr__(self) -> str:
+        input_names = [inp.name for inp in self.inputs]
+        all_inputs = input_names + self.pi_inputs
+        
+        output_names = [out.name for out in self.outputs]
+        all_outputs = output_names + self.po_outputs
+        
+        mapping_str = ', mapping=' + str(self.input_mapping) if self.input_mapping else ''
+                
+        return f'Gate({self.name}, type={self.gate_type}, inputs={all_inputs}, outputs={all_outputs}{mapping_str})'
 
 class Net:
     def __init__(self, name, source=None, destinations=None):
@@ -87,6 +114,12 @@ class Circuit:
         
         source_gate.add_output(dest_gate)
         dest_gate.add_input(source_gate)
+        
+        for i, input_gate in enumerate(dest_gate.inputs):
+            if input_gate.name == source_gate.name:
+                dest_gate.input_mapping[i] = source_gate.name
+                break
+        
         return net
     
     def set_input_gates(self, gate_names): self.inputs = gate_names
@@ -147,13 +180,24 @@ def parse(file_contents):
         if output_port not in circuit.nets: circuit.add_net(output_net)
         output_net.set_source(gate)
         
-        for input_port in input_ports:
+        gate.verilog_inputs = input_ports.copy()
+        
+        for i, input_port in enumerate(input_ports):
             input_net = circuit.nets.get(input_port) or Net(input_port)
             if input_port not in circuit.nets: circuit.add_net(input_net)
             input_net.add_destination(gate)
+            
+            if input_port in inputs:
+                pi_name = f"PI_{input_port}"
+                gate.add_pi_input(pi_name)
+                gate.input_mapping[i] = pi_name
+            else:
+                gate.input_mapping[i] = input_port
         
-        if output_port in outputs and circuit.gates.get(output_port): circuit.connect(gate_name, output_port)
-    
+        if output_port in outputs:
+            po_name = f"PO_{output_port}"
+            gate.add_po_output(po_name)
+
     for net_name, net in circuit.nets.items():
         if net.source and net.destinations:
             source_gate = net.source
@@ -161,6 +205,24 @@ def parse(file_contents):
                 if source_gate.name != dest_gate.name:
                     is_gate = lambda g: any(g.name.lower().startswith(p) for p in ['nand', 'nor', 'not'])
                     if is_gate(source_gate) and is_gate(dest_gate): circuit.connect(source_gate.name, dest_gate.name, net_name)
+    
+    # we make a mapping for ech gate, as to what input is connected to what pin
+    # this makes constraint-gen a whole lot easier. otherwise it is a pain to get
+    # the constraints right when solving for gate sizing. this is the right place
+    # to do it because then the solver setup is clean - just have to access this var.
+    for gate_name, gate in circuit.gates.items():
+        new_mapping = {}
+        
+        for i, verilog_input in enumerate(gate.verilog_inputs):
+            if verilog_input in inputs:
+                new_mapping[i] = f'PI_{verilog_input}'
+            else:
+                if verilog_input in circuit.nets and circuit.nets[verilog_input].source:
+                    new_mapping[i] = circuit.nets[verilog_input].source.name
+                else:
+                    new_mapping[i] = verilog_input
+        
+        gate.input_mapping = new_mapping
     
     circuit.set_input_gates(inputs)
     circuit.set_output_gates(outputs)
@@ -216,11 +278,11 @@ if __name__ == '__main__':
         base_filename = sys.argv[1].split('.')[0]
         output_file = f"{base_filename}_dag.png"
         
-        try:
-            circuit.visualize_dag(output_file)
-            print(f"DAG visualization saved to: {output_file}")
-        except:
-            pass
+        # try:
+        #     circuit.visualize_dag(output_file)
+        #     print(f"DAG visualization saved to: {output_file}")
+        # except:
+        #     pass
         
         analyze_circuit(circuit)
     except FileNotFoundError: print(f"Error: File '{sys.argv[1]}' not found"); sys.exit(1)
